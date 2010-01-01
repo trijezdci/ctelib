@@ -53,6 +53,7 @@
 #include "hash.h"
 #include "alloc.h"
 #include "common.h"
+#include "bailout.h"
 #include "cte_stack.h"
 
 
@@ -87,9 +88,9 @@
 #define CTE_IGNORE_PFX_CHAR_2 PERCENT
 
 static const char _cte_ignore_prefix[] = {
-    CTE_IGNORE_PFX_CHAR_1,
-    CTE_IGNORE_PFX_CHAR_2,
-    CSTRING_TERMINATOR
+CTE_IGNORE_PFX_CHAR_1,
+CTE_IGNORE_PFX_CHAR_2,
+CSTRING_TERMINATOR
 } /* _cte_ignore_prefix */ ;
 
 
@@ -101,9 +102,9 @@ static const char _cte_ignore_prefix[] = {
 #define CTE_DELIMITER_CHAR_2 AT_SIGN
 
 static const char _cte_delimiter[] = {
-    CTE_DELIMITER_CHAR_1,
-    CTE_DELIMITER_CHAR_2,
-    CSTRING_TERMINATOR
+CTE_DELIMITER_CHAR_1,
+CTE_DELIMITER_CHAR_2,
+CSTRING_TERMINATOR
 } /* _cte_delimiter */ ;
 
 
@@ -119,15 +120,15 @@ static cte_notification_f _cte_notify = NULL;
 // ===========================================================================
 
 static fmacro char *_update_target(char char_to_add, char *initial_str,
-                    cardinal index, cardinal *size, cte_status_t *status);
+                                   cardinal index, cardinal *size, cte_status_t *status);
 
 #define CTE_NOTIFY( _notification, _str, _index_or_size) \
-    { if (_cte_notify != NULL) \
-        _cte_notify( _notification, _str, _index_or_size); }
+{ if (_cte_notify != NULL) \
+_cte_notify( _notification, _str, _index_or_size); }
 
 #define CTE_START_OF_LINE(_str, _index, _nesting_level) \
-    (((_index == 0) && (_nesting_level == 0)) || \
-    ((_index > 0) && (_str[_index-1] == NEWLINE)))
+(((_index == 0) && (_nesting_level == 0)) || \
+((_index > 0) && (_str[_index-1] == NEWLINE)))
 
 
 // ===========================================================================
@@ -272,8 +273,8 @@ inline void cte_install_notification_handler(cte_notification_f handler) {
 // passed in for <status>.
 
 char *cte_string_from_template(const char *template,
-                              kvs_table_t placeholders,
-                             cte_status_t *status) {
+                               kvs_table_t placeholders,
+                               cte_status_t *status) {
     
     char *source; // source string pointer
     char *target; // target string pointer
@@ -325,11 +326,11 @@ char *cte_string_from_template(const char *template,
     
     
     nesting_level = 0;
-
+    
     source = (char *) template;
     s_index = 0;
     t_index = 0;
-
+    
     // recursively expand source strings
     repeat {
         
@@ -344,13 +345,8 @@ char *cte_string_from_template(const char *template,
                                     target, t_index, &t_size, &r_status);
             
             // bail out if allocation failed
-            if (r_status == CTE_STATUS_ALLOCATION_FAILED) {
-                CTE_NOTIFY(CTE_NOTIFICATION_TARGET_ENLARGEMENT_FAILED,
-                           source, s_index);
-                DEALLOCATE(stack);
-                ASSIGN_BY_REF(status, r_status);
-                return target;
-            } // end if
+            if (r_status == CTE_STATUS_ALLOCATION_FAILED)
+                BAILOUT(enlargement_failed);
             
             s_index++;
             t_index++;
@@ -359,11 +355,11 @@ char *cte_string_from_template(const char *template,
         // handle special characters
         switch (source[s_index]) {
                 
-            // backslash may indicate escaped delimiter
+                // backslash may indicate escaped delimiter
             case BACKSLASH :
                 
                 switch (source[s_index+1]) {
-                    
+                        
                     // found backslash escaped backslash
                     case BACKSLASH :
                     // copy leading backslash to target, enlarge if necessary
@@ -371,28 +367,22 @@ char *cte_string_from_template(const char *template,
                                         target, t_index, &t_size, &r_status);
                         
                         // bail out if allocation failed
-                        if (r_status == CTE_STATUS_ALLOCATION_FAILED) {
-                            CTE_NOTIFY(
-                                    CTE_NOTIFICATION_TARGET_ENLARGEMENT_FAILED,
-                                    source, s_index);
-                            DEALLOCATE(stack);
-                            ASSIGN_BY_REF(status, r_status);
-                            return target;
-                        } // end if
+                        if (r_status == CTE_STATUS_ALLOCATION_FAILED)
+                            BAILOUT(enlargement_failed);
                         
                         s_index++;
                         t_index++;
                         
                         break; // case
-                    
-                    // found backslash escaped delimiter
+                        
+                        // found backslash escaped delimiter
                     case CTE_DELIMITER_CHAR_1 :
                         // skip leading backslash
                         s_index++;
                         
                         break; // case
-                    
-                    // found ignore prefix following backslash
+                        
+                        // found ignore prefix following backslash
                     case CTE_IGNORE_PFX_CHAR_1 :
                         // check if leading backslash is at first row of line
                         if (CTE_START_OF_LINE(source, s_index, nesting_level))
@@ -407,20 +397,15 @@ char *cte_string_from_template(const char *template,
                                         target, t_index, &t_size, &r_status);
                 
                 // bail out if allocation failed
-                if (r_status == CTE_STATUS_ALLOCATION_FAILED) {
-                    CTE_NOTIFY(CTE_NOTIFICATION_TARGET_ENLARGEMENT_FAILED,
-                               source, s_index);
-                    DEALLOCATE(stack);
-                    ASSIGN_BY_REF(status, r_status);
-                    return target;
-                } // end if
+                if (r_status == CTE_STATUS_ALLOCATION_FAILED)
+                    BAILOUT(enlargement_failed);
                 
                 s_index++;
                 t_index++;
                 
                 break; // case
-            
-            // delimiter char may indicate template engine placeholder
+                
+                // delimiter char may indicate template engine placeholder
             case CTE_DELIMITER_CHAR_1:
                 
                 // check for opening delimiter followed by letter
@@ -448,15 +433,8 @@ char *cte_string_from_template(const char *template,
                         (source[s_index+1] == CTE_DELIMITER_CHAR_2)) {
                         
                         // bail out if nesting limit is reached
-                        if (nesting_level >= CTE_MAX_NESTING_LEVEL) {
-                            CTE_NOTIFY(CTE_NOTIFICATION_NESTING_LIMIT_EXCEEDED,
-                                       source, s_index);
-                            DEALLOCATE(target);
-                            DEALLOCATE(stack);
-                            ASSIGN_BY_REF(status,
-                                          CTE_STATUS_NESTING_LIMIT_EXCEEDED);
-                            return NULL;
-                        } // end if
+                        if (nesting_level >= CTE_MAX_NESTING_LEVEL)
+                            BAILOUT(nesting_limit_exceeded);
                         
                         // save source and index to recursion stack
                         cte_stack_push_context(stack, source, s_index, NULL);
@@ -481,14 +459,8 @@ char *cte_string_from_template(const char *template,
                                         target, t_index, &t_size, &r_status);
                         
                         // bail out if allocation failed
-                        if (r_status == CTE_STATUS_ALLOCATION_FAILED) {
-                            CTE_NOTIFY(
-                                    CTE_NOTIFICATION_TARGET_ENLARGEMENT_FAILED,
-                                    source, s_index);
-                            DEALLOCATE(stack);
-                            ASSIGN_BY_REF(status, r_status);
-                            return target;
-                        } // end if
+                        if (r_status == CTE_STATUS_ALLOCATION_FAILED)
+                            BAILOUT(enlargement_failed);
                         
                         s_index++;
                         t_index++;
@@ -500,21 +472,16 @@ char *cte_string_from_template(const char *template,
                                         target, t_index, &t_size, &r_status);
                     
                     // bail out if allocation failed
-                    if (r_status == CTE_STATUS_ALLOCATION_FAILED) {
-                        CTE_NOTIFY(CTE_NOTIFICATION_TARGET_ENLARGEMENT_FAILED,
-                                   source, s_index);
-                        DEALLOCATE(stack);
-                        ASSIGN_BY_REF(status, r_status);
-                        return target;
-                    } // end if
+                    if (r_status == CTE_STATUS_ALLOCATION_FAILED)
+                        BAILOUT(enlargement_failed);
                     
                     s_index++;
                     t_index++;
                 } // end if
                 
                 break; // case
-            
-            // prefix char may indicate template engine comment line
+                
+                // prefix char may indicate template engine comment line
             case CTE_IGNORE_PFX_CHAR_1:
                 // check for ignore line prefix at first coloumn
                 if ((source[s_index+1] == CTE_IGNORE_PFX_CHAR_2) &&
@@ -523,7 +490,7 @@ char *cte_string_from_template(const char *template,
                     // skip all characters until line end without copying
                     while ((source[s_index] != NEWLINE) &&
                            (source[s_index] != CSTRING_TERMINATOR)) {
-                    s_index++;
+                        s_index++;
                     } // end while
                 }
                 else /* no ignore line prefix found at first coloumn */ {
@@ -532,21 +499,16 @@ char *cte_string_from_template(const char *template,
                                         target, t_index, &t_size, &r_status);
                     
                     // bail out if allocation failed
-                    if (r_status == CTE_STATUS_ALLOCATION_FAILED) {
-                        CTE_NOTIFY(CTE_NOTIFICATION_TARGET_ENLARGEMENT_FAILED,
-                                   source, s_index);
-                        DEALLOCATE(stack);
-                        ASSIGN_BY_REF(status, r_status);
-                        return target;
-                    } // end if
+                    if (r_status == CTE_STATUS_ALLOCATION_FAILED)
+                        BAILOUT(enlargement_failed);
                     
                     s_index++;
                     t_index++;
                 } // end if
                 
                 break; // case
-            
-            // C string terminator indicates end of template string
+                
+                // C string terminator indicates end of template string
             case CSTRING_TERMINATOR:
                 
                 // return from recursion unless nesting level is zero
@@ -563,23 +525,40 @@ char *cte_string_from_template(const char *template,
     } until ((source[s_index] == CSTRING_TERMINATOR) && (nesting_level == 0));
     
     // clean up
-    DEALLOCATE(stack);
     
     // terminate target string, enlarge if necessary
     target = _update_target(CSTRING_TERMINATOR,
                             target, t_index, &t_size, &r_status);
     
-    if (r_status == CTE_STATUS_SUCCESS) {
-        CTE_NOTIFY(CTE_NOTIFICATION_TARGET_SIZE_INFO, target, t_size);
-    }
-    else /* target update failed */ {
+    // bail out if allocation failed
+    if (r_status == CTE_STATUS_ALLOCATION_FAILED)
+        BAILOUT(enlargement_failed);
+    
+    /* NORMAL TERMINATION */
+
+    CTE_NOTIFY(CTE_NOTIFICATION_TARGET_SIZE_INFO, target, t_size);
+    
+    // return expanded string and status to caller
+    ASSIGN_BY_REF(status, CTE_STATUS_SUCCESS);
+    DEALLOCATE(stack);
+    return target;
+    
+    /* ERROR HANDLING */
+    
+    ON_ERROR(enlargement_failed) :
         CTE_NOTIFY(CTE_NOTIFICATION_TARGET_ENLARGEMENT_FAILED,
                    source, s_index);
-    } // end if
-
-    // return expanded string and status to caller
-    ASSIGN_BY_REF(status, r_status);
-    return target;
+        DEALLOCATE(stack);
+        ASSIGN_BY_REF(status, CTE_STATUS_ALLOCATION_FAILED);
+        return target;
+    
+    ON_ERROR(nesting_limit_exceeded) :
+        CTE_NOTIFY(CTE_NOTIFICATION_NESTING_LIMIT_EXCEEDED,
+                   source, s_index);
+        DEALLOCATE(target);
+        DEALLOCATE(stack);
+        ASSIGN_BY_REF(status, CTE_STATUS_NESTING_LIMIT_EXCEEDED);
+        return NULL;
 } // cte_string_from_template
 
 
@@ -632,9 +611,9 @@ char *cte_string_from_template(const char *template,
 
 static fmacro char *_update_target(char char_to_add,
                                    char *initial_target,
-                               cardinal index,
-                               cardinal *size,
-                           cte_status_t *status) {
+                                   cardinal index,
+                                   cardinal *size,
+                                   cte_status_t *status) {
     char *new_target;
     cardinal new_size;
     
