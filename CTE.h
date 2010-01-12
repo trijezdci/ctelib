@@ -112,7 +112,7 @@ typedef void (*cte_notification_f)(cte_notification_t, const char*, cardinal);
 // placeholder delimiter.  The placeholder delimiter may be changed at compile
 // time only.  The factory setting is "@@".
 
-const char *cte_delimiter(void);
+inline const char *cte_delimiter(void);
 
 
 // ---------------------------------------------------------------------------

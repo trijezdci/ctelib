@@ -129,9 +129,8 @@ static fmacro char *_update_target(char char_to_add, char *initial_str,
     { if (_cte_notify != NULL) \
     _cte_notify( _notification, _str, _index_or_size); }
 
-#define CTE_START_OF_LINE(_str, _index, _nesting_level) \
-    (((_index == 0) && (_nesting_level == 0)) || \
-    ((_index > 0) && (_str[_index-1] == NEWLINE)))
+#define CTE_START_OF_LINE(_str, _index) \
+    ((_index == 0) || (_str[_index-1] == NEWLINE))
 
 
 // ===========================================================================
@@ -364,7 +363,7 @@ char *cte_string_from_template(const char *template,
                         // found ignore prefix following backslash
                     case CTE_IGNORE_PFX_CHAR_1 :
                         // check if leading backslash is at first row of line
-                        if (CTE_START_OF_LINE(source, s_index, nesting_level))
+                        if (CTE_START_OF_LINE(source, s_index))
                             // skip leading backslash
                             s_index++;
                         
@@ -464,7 +463,7 @@ char *cte_string_from_template(const char *template,
             case CTE_IGNORE_PFX_CHAR_1:
                 // check for ignore line prefix at first coloumn
                 if ((source[s_index+1] == CTE_IGNORE_PFX_CHAR_2) &&
-                    CTE_START_OF_LINE(source, s_index, nesting_level)) {
+                    CTE_START_OF_LINE(source, s_index)) {
                     
                     // skip all characters until line end without copying
                     while ((source[s_index] != NEWLINE) &&
