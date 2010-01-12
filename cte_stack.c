@@ -53,6 +53,23 @@
 
 
 // ---------------------------------------------------------------------------
+// Range checks
+// ---------------------------------------------------------------------------
+
+#if (CTE_DEFAULT_STACK_SIZE < 1)
+#error CTE_DEFAULT_STACK_SIZE must not be zero, recommended minimum is 8
+#elif (CTE_DEFAULT_STACK_SIZE > CTE_MAXIMUM_STACK_SIZE)
+#error CTE_DEFAULT_STACK_SIZE must not be larger than CTE_MAXIMUM_STACK_SIZE
+#endif
+
+#if (CTE_DEFAULT_STACK_SIZE < 8)
+#warning CTE_DEFAULT_STACK_SIZE is unreasonably low, factory setting is 100
+#elif (CTE_DEFAULT_STACK_SIZE > 65535)
+#warning CTE_DEFAULT_STACK_SIZE is unreasonably high, factory setting is 100
+#endif
+
+
+// ---------------------------------------------------------------------------
 // Template context storage type
 // ---------------------------------------------------------------------------
 
@@ -63,53 +80,85 @@ typedef struct /* cte_context_s */ {
 
 
 // ---------------------------------------------------------------------------
+// Template context stack entry pointer type for self referencing declaration
+// ---------------------------------------------------------------------------
+
+struct _cte_stack_entry_s; /* FORWARD */
+
+typedef struct _cte_stack_entry_s *cte_stack_entry_p;
+
+
+// ---------------------------------------------------------------------------
+// Template context stack entry type
+// ---------------------------------------------------------------------------
+
+struct _cte_stack_entry_s {
+        cte_context_s context;
+    cte_stack_entry_p next;
+};
+
+typedef struct _cte_stack_entry_s cte_stack_entry_s;
+
+
+// ---------------------------------------------------------------------------
 // Template context stack type
 // ---------------------------------------------------------------------------
 
 typedef struct /* cte_stack_s */ {
-         cardinal size;
-         cardinal pointer;
-    cte_context_s context[0];
+    cte_stack_entry_s *overflow;
+     cte_stack_size_t entry_count;
+     cte_stack_size_t array_size;
+        cte_context_s context[0];
 } cte_stack_s;
 
 
 // ---------------------------------------------------------------------------
-// function:  cte_new_stack( size, status )
+// function:  cte_new_stack( initial_size, status )
 // ---------------------------------------------------------------------------
 //
-// Creates and returns a new stack object with size <size>.  If zero is passed
-// in <size>,  then the new stack will be created  with the default stack size
-// as defined by CTE_DEFAULT_STACK_SIZE.  Returns NULL if the new stack object
-// could not be created.
+// Creates and returns a new CTE template context stack object with an initial
+// capacity of <initial_size>.  If zero is passed in for <initial_size>,  then
+// it will be created with an initial capacity of CTE_DEFAULT_STACK_SIZE.  The
+// function fails if a value greater than  CTE_MAXIMUM_STACK_SIZE is passed in
+// for <initial_size> or if memory could not be allocated.
+//
+// The  initial capacity  of a stack is the number of context entries that can
+// be stored in the stack without enlargement.
 //
 // The status of the operation  is passed back in <status>,  unless  NULL  was
 // passed in for <status>.
 
-cte_stack_t cte_new_stack(cardinal size, cte_stack_status_t *status) {
+cte_stack_t cte_new_stack(cte_stack_size_t initial_size,
+                        cte_stack_status_t *status) {
     cte_stack_s *stack;
     
-    if (size == 0) {
-        size = CTE_DEFAULT_STACK_SIZE;
+    // zero size means default
+    if (initial_size == 0) {
+        initial_size = CTE_DEFAULT_STACK_SIZE;
     } // end if
     
-    // allocate new stack
-    stack = ALLOCATE(sizeof(cte_stack_s) + size * sizeof(cte_context_s));
-    
-    // bail out if allocation failed
-    if (stack == NULL) {
-        ASSIGN_BY_REF(status, CTE_STACK_ALLOCATION_FAILED);
+    // bail out if initial size is too high
+    if (initial_size > CTE_MAXIMUM_STACK_SIZE) {
+        ASSIGN_BY_REF(status, CTE_STACK_STATUS_INVALID_SIZE);
         return NULL;
     } // end if
     
-    // initialise size and stack pointer
-    stack->size = size;
-    stack->pointer = 0;
+    // allocate new stack
+    stack =
+        ALLOCATE(sizeof(cte_stack_s) + initial_size * sizeof(cte_context_s));
     
-    // initialise bottom of stack
-    stack->context[0].str = NULL;
-    stack->context[0].index = 0;
+    // bail out if allocation failed
+    if (stack == NULL) {
+        ASSIGN_BY_REF(status, CTE_STACK_STATUS_ALLOCATION_FAILED);
+        return NULL;
+    } // end if
     
-    // pass status and stack to caller
+    // initialise meta data
+    stack->array_size = initial_size;
+    stack->entry_count = 0;
+    stack->overflow = NULL;
+        
+    // pass status and new stack to caller
     ASSIGN_BY_REF(status, CTE_STACK_STATUS_SUCCESS);
     return (cte_stack_t) stack;
 } // end cte_new_stack
@@ -121,7 +170,11 @@ cte_stack_t cte_new_stack(cardinal size, cte_stack_status_t *status) {
 //
 // Saves a template context to the stack passed in <stack>.  The context para-
 // meters are passed in  <template_str>  and <index>.  The operation will fail
-// if NULL is passed in for <stack> or <template_str> or if the stack is full.
+// if NULL is passed in for <stack> or <template_str> or if the stack size has
+// reached CTE_MAXIMUM_STACK_SIZE.
+//
+// New entries are allocated dynamically  if the number of entries exceeds the
+// initial capacity of the stack.
 //
 // The status of the operation  is passed back in <status>,  unless  NULL  was
 // passed in for <status>.
@@ -131,7 +184,8 @@ void cte_stack_push_context(cte_stack_t stack,
                                cardinal index,
                      cte_stack_status_t *status) {
     
-    cte_stack_s *this_stack = (cte_stack_s *) stack;
+    #define this_stack ((cte_stack_s *)stack)
+    cte_stack_entry_s *new_entry;
     
     // bail out if stack is NULL
     if (stack == NULL) {
@@ -146,17 +200,45 @@ void cte_stack_push_context(cte_stack_t stack,
     } // end if
     
     // bail out if stack is full
-    if (this_stack->pointer >= this_stack->size) {
+    if (this_stack->entry_count >= CTE_MAXIMUM_STACK_SIZE) {
         ASSIGN_BY_REF(status, CTE_STACK_STATUS_STACK_OVERFLOW);
         return;
     } // end if
     
-    this_stack->context[this_stack->pointer].str = template_str;
-    this_stack->context[this_stack->pointer].index = index;
-    this_stack->pointer++;
+    // check if index falls within array segment
+    if (this_stack->entry_count < this_stack->array_size) {
+        
+        // store context in arr array segment
+        this_stack->context[this_stack->entry_count].str = template_str;
+        this_stack->context[this_stack->entry_count].index = index;
+    }
+    else /* index falls within overflow segment */ {
+        
+        // allocate new entry slot
+        new_entry = ALLOCATE(sizeof(cte_stack_entry_s));
+        
+        // bail out if allocation failed
+        if (new_entry == NULL) {
+            ASSIGN_BY_REF(status, CTE_STACK_STATUS_ALLOCATION_FAILED);
+            return;
+        } // end if
+        
+        // store context in new_entry
+        new_entry->context.str = template_str;
+        new_entry->context.index = index;
+        
+        // link new entry into overflow list
+        new_entry->next = this_stack->overflow;
+        this_stack->overflow = new_entry;
+    } // end if
+    
+    // update entry counter
+    this_stack->entry_count++;
     
     ASSIGN_BY_REF(status, CTE_STACK_STATUS_SUCCESS);
     return;
+    
+    #undef this_stack
 } // end cte_stack_push_context
 
 
@@ -164,10 +246,12 @@ void cte_stack_push_context(cte_stack_t stack,
 // function:  cte_stack_pop_context( stack, index, status )
 // ---------------------------------------------------------------------------
 //
-// Removes the  top most  template context  from the stack  passed in <stack>,
-// returns its template pointer  as function result  and passes its index back
-// in <index>  unless NULL was passed in for <index>.  The operation will fail
-// if NULL is passed in for <stack>.
+// Removes the top most template context from the stack passed in <stack>  and
+// returns its  template pointer.  Its index  is passed back  in <index>.  The
+// operation fails if NULL is passed in for <stack> or <index>.
+//
+// Entries which were allocated dynamically  (above the initial capacity)  are
+// deallocated when their values are popped.
 //
 // The status of the operation  is passed back in <status>,  unless  NULL  was
 // passed in for <status>.
@@ -176,24 +260,56 @@ char *cte_stack_pop_context(cte_stack_t stack,
                                cardinal *index,
                      cte_stack_status_t *status) {
     
-    cte_stack_s *this_stack = (cte_stack_s *) stack;
+    #define this_stack ((cte_stack_s *)stack)
+    cte_stack_entry_s *this_entry;
+    char *template_str;
     
     // bail out if stack is NULL
     if (stack == NULL) {
         ASSIGN_BY_REF(status, CTE_STACK_STATUS_INVALID_STACK);
         return NULL;
     } // end if
+
+    // bail out if index is NULL
+    if (index == NULL) {
+        ASSIGN_BY_REF(status, CTE_STACK_STATUS_INVALID_INDEX);
+        return NULL;
+    } // end if
     
-    if (this_stack->pointer == 0) {
+    if (this_stack->entry_count == 0) {
         ASSIGN_BY_REF(status, CTE_STACK_STATUS_STACK_EMPTY);
         return NULL;
     } // end if
     
-    this_stack->pointer--;
+    this_stack->entry_count--;
     
-    ASSIGN_BY_REF(status, CTE_STACK_STATUS_SUCCESS);
-    *index = this_stack->context[this_stack->pointer].index;
-    return this_stack->context[this_stack->pointer].str;
+    // check if index falls within array segment
+    if (this_stack->entry_count < this_stack->array_size) {
+        
+        // return value and status to caller
+        ASSIGN_BY_REF(status, CTE_STACK_STATUS_SUCCESS);
+        *index = this_stack->context[this_stack->entry_count].index;
+        return this_stack->context[this_stack->entry_count].str;
+        
+    }
+    else /* index falls within overflow segment */ {
+        
+        // get context from first entry in overflow list
+        template_str = this_stack->overflow->context.str;
+        *index = this_stack->overflow->context.index;
+        
+        // remember first entry in overflow list
+        this_entry = this_stack->overflow;
+        this_stack->overflow = this_stack->overflow->next;
+        
+        // remove the entry
+        DEALLOCATE(this_entry);
+        
+        ASSIGN_BY_REF(status, CTE_STACK_STATUS_SUCCESS);
+        return template_str;
+    } // end if
+    
+    #undef this_stack
 } // end cte_stack_pop_context
 
 
@@ -204,15 +320,19 @@ char *cte_stack_pop_context(cte_stack_t stack,
 // Returns the number of context slots of stack <stack>,  returns zero if NULL
 // is passed in for <stack>.
 
-cardinal cte_stack_size(cte_stack_t stack) {
-    
-    cte_stack_s *this_stack = (cte_stack_s *) stack;
+cte_stack_size_t cte_stack_size(cte_stack_t stack) {
+    #define this_stack ((cte_stack_s *)stack)
     
     // bail out if stack is NULL
     if (stack == NULL)
         return 0;
     
-    return this_stack->size;
+    if (this_stack->entry_count < this_stack->array_size)
+        return this_stack->array_size;
+    else
+        return this_stack->entry_count;
+    
+    #undef this_stack
 } // end cte_stack_size
 
 
@@ -223,15 +343,16 @@ cardinal cte_stack_size(cte_stack_t stack) {
 // Returns  the number of  template contexts  saved on stack <stack>,  returns
 // zero if NULL is passed in for <stack>.
 
-cardinal cte_stack_number_of_entries(cte_stack_t stack) {
-    
-    cte_stack_s *this_stack = (cte_stack_s *) stack;
+cte_stack_size_t cte_stack_number_of_entries(cte_stack_t stack) {
+    #define this_stack ((cte_stack_s *)stack)
     
     // bail out if stack is NULL
     if (stack == NULL)
         return 0;
     
-    return this_stack->pointer;
+    return this_stack->entry_count;
+    
+    #undef this_stack
 } // end cte_stack_number_of_entries
 
 
@@ -239,14 +360,32 @@ cardinal cte_stack_number_of_entries(cte_stack_t stack) {
 // function:  cte_dispose_stack( stack )
 // ---------------------------------------------------------------------------
 //
-// Disposes of stack object <stack>.
+// Disposes of stack object <stack>.  Returns NULL.
 
-void cte_dispose_stack(cte_stack_t stack) {
+cte_stack_t cte_dispose_stack(cte_stack_t stack) {
+    #define this_stack ((cte_stack_s *)stack)
+    cte_stack_entry_s *this_entry;
     
+    // bail out if stack is NULL
+    if (stack == NULL)
+        return NULL;
+    
+    // deallocate any entries in stack's overflow list
+    while (this_stack->overflow != NULL) {
+        
+        // isolate first entry in overflow list
+        this_entry = this_stack->overflow;
+        this_stack->overflow = this_stack->overflow->next;
+        
+        // deallocate the entry
+        DEALLOCATE(this_entry);
+    } // end while
+    
+    // deallocate stack object and pass NULL to caller
     DEALLOCATE(stack);
-    stack = NULL;
+    return NULL;
     
-    return;
+    #undef this_stack
 } // end cte_dispose_stack
 
 

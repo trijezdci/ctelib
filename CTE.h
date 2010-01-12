@@ -56,6 +56,20 @@
 
 
 // ---------------------------------------------------------------------------
+// Maximum length for placeholder names
+// ---------------------------------------------------------------------------
+
+#define CTE_MAX_PLACEHOLDER_LENGTH 32
+
+
+// ---------------------------------------------------------------------------
+// Maximum template nesting level
+// ---------------------------------------------------------------------------
+
+#define CTE_MAX_NESTING_LEVEL 65535
+
+
+// ---------------------------------------------------------------------------
 // Status codes
 // ---------------------------------------------------------------------------
 
@@ -110,26 +124,6 @@ const char *cte_delimiter(void);
 // factory setting is "%%".
 
 inline const char *cte_ignore_prefix(void);
-
-
-// ---------------------------------------------------------------------------
-// function:  cte_max_placeholder_length()
-// ---------------------------------------------------------------------------
-//
-// Returns the value  of the library's built-in maximum length for placeholder
-// identifiers (length not including delimiters).  The factory setting is 32.
-
-inline cardinal cte_max_placeholder_length(void);
-
-
-// ---------------------------------------------------------------------------
-// function:  cte_max_nesting_level()
-// ---------------------------------------------------------------------------
-//
-// Returns the value  of the library's  built-in  maximum level  for  template
-// nesting.  The factory setting is 100.
-
-inline cardinal cte_max_nesting_level(void);
 
 
 // ---------------------------------------------------------------------------

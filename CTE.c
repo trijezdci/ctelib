@@ -58,26 +58,29 @@
 
 
 // ---------------------------------------------------------------------------
+// Range checks
+// ---------------------------------------------------------------------------
+
+#if (CTE_MAX_PLACEHOLDER_LENGTH < 1)
+#error CTE_MAX_PLACEHOLDER_LENGTH must not be zero, recommended minimum is 16
+#elif (CTE_MAX_PLACEHOLDER_LENGTH > 65535)
+#error CTE_MAX_PLACEHOLDER_LENGTH must not be larger than 65535
+#endif
+
+#if (CTE_MAX_NESTING_LEVEL < 8)
+#warning CTE_MAX_NESTING_LEVEL is unreasonably low, factory setting is 65535
+#elif (CTE_MAX_NESTING_LEVEL > 65535)
+#warning CTE_MAX_NESTING_LEVEL is unreasonably high, factory setting is 65535
+#endif
+
+
+// ---------------------------------------------------------------------------
 // Size and growth parameters for target string
 // ---------------------------------------------------------------------------
 
 #define CTE_TARGET_SIZE_INITIAL (4*1024) /* 4 KBytes */
 
 #define CTE_TARGET_SIZE_INCREMENT (4*1024) /* 4 KBytes */
-
-
-// ---------------------------------------------------------------------------
-// Maximum length for placeholder names
-// ---------------------------------------------------------------------------
-
-#define CTE_MAX_PLACEHOLDER_LENGTH 32
-
-
-// ---------------------------------------------------------------------------
-// Maximum template nesting level
-// ---------------------------------------------------------------------------
-
-#define CTE_MAX_NESTING_LEVEL 100
 
 
 // ---------------------------------------------------------------------------
@@ -88,9 +91,9 @@
 #define CTE_IGNORE_PFX_CHAR_2 PERCENT
 
 static const char _cte_ignore_prefix[] = {
-CTE_IGNORE_PFX_CHAR_1,
-CTE_IGNORE_PFX_CHAR_2,
-CSTRING_TERMINATOR
+    CTE_IGNORE_PFX_CHAR_1,
+    CTE_IGNORE_PFX_CHAR_2,
+    CSTRING_TERMINATOR
 } /* _cte_ignore_prefix */ ;
 
 
@@ -102,9 +105,9 @@ CSTRING_TERMINATOR
 #define CTE_DELIMITER_CHAR_2 AT_SIGN
 
 static const char _cte_delimiter[] = {
-CTE_DELIMITER_CHAR_1,
-CTE_DELIMITER_CHAR_2,
-CSTRING_TERMINATOR
+    CTE_DELIMITER_CHAR_1,
+    CTE_DELIMITER_CHAR_2,
+    CSTRING_TERMINATOR
 } /* _cte_delimiter */ ;
 
 
@@ -120,15 +123,15 @@ static cte_notification_f _cte_notify = NULL;
 // ===========================================================================
 
 static fmacro char *_update_target(char char_to_add, char *initial_str,
-                                   cardinal index, cardinal *size, cte_status_t *status);
+                        cardinal index, cardinal *size, cte_status_t *status);
 
 #define CTE_NOTIFY( _notification, _str, _index_or_size) \
-{ if (_cte_notify != NULL) \
-_cte_notify( _notification, _str, _index_or_size); }
+    { if (_cte_notify != NULL) \
+    _cte_notify( _notification, _str, _index_or_size); }
 
 #define CTE_START_OF_LINE(_str, _index, _nesting_level) \
-(((_index == 0) && (_nesting_level == 0)) || \
-((_index > 0) && (_str[_index-1] == NEWLINE)))
+    (((_index == 0) && (_nesting_level == 0)) || \
+    ((_index > 0) && (_str[_index-1] == NEWLINE)))
 
 
 // ===========================================================================
@@ -159,30 +162,6 @@ inline const char *cte_delimiter(void) {
 inline const char *cte_ignore_prefix(void) {
     return (const char *) &_cte_ignore_prefix;
 } // end cte_ignore_prefix
-
-
-// ---------------------------------------------------------------------------
-// function:  cte_max_placeholder_length()
-// ---------------------------------------------------------------------------
-//
-// Returns the value  of the library's built-in maximum length for placeholder
-// identifiers (length not including delimiters).  The factory setting is 32.
-
-inline cardinal cte_max_placeholder_length(void) {
-    return CTE_MAX_PLACEHOLDER_LENGTH;
-} // end cte_max_placeholder_length
-
-
-// ---------------------------------------------------------------------------
-// function:  cte_max_nesting_level()
-// ---------------------------------------------------------------------------
-//
-// Returns the value  of the library's  built-in  maximum level  for  template
-// nesting.  The factory setting is 100.
-
-inline cardinal cte_max_nesting_level(void) {
-    return CTE_MAX_NESTING_LEVEL;
-} // end cte_max_nesting_level
 
 
 // ---------------------------------------------------------------------------
